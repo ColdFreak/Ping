@@ -1,7 +1,7 @@
 /* 
- * icmp request一回しか送らない,生きてる場合はaliveメッセージを表示する
- * タイムアウトの場合は最大3回送る
+ * icmp request 3回しか送らない
  * なのでnum_sent を定義する
+ * sig_alrm() 関数の中にnum_sent を判断する 
  */
 #include <stdio.h>
 #include <stdlib.h>
