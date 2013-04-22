@@ -1,7 +1,7 @@
-/* sig_alrm()の中にalarm()の代わりに
- * ualarm()を使って、0.5秒の間隔でパケットを送るようになった
- * useconds_t ualarm(useconds_t usecs, useconds_t interval);
-
+/* 
+ * icmp request一回しか送らない,生きてる場合はaliveメッセージを表示する
+ * タイムアウトの場合は最大3回送る
+ * なのでnum_sent を定義する
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -55,7 +55,8 @@ int main(int argc, char **argv) {
 
 	host = argv[1];
 	pid = getpid() & 0xffff;
-	signal(SIGALRM, sig_alrm); 
+// 
+//	signal(SIGALRM, sig_alrm); 
 
 	bzero(&hints, sizeof(struct addrinfo));
 	hints.ai_flags = AI_CANONNAME;
