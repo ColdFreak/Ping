@@ -28,6 +28,7 @@ int datalen = 56;
 char sendbuf[BUFSIZE];
 char h[128];
 int nsent = 0;
+int num_sent = 0; /* send up to 3 times*/
 
 struct addrinfo hints;
 struct addrinfo *res;
@@ -55,8 +56,8 @@ int main(int argc, char **argv) {
 
 	host = argv[1];
 	pid = getpid() & 0xffff;
-// 
-//	signal(SIGALRM, sig_alrm); 
+
+	signal(SIGALRM, sig_alrm); 
 
 	bzero(&hints, sizeof(struct addrinfo));
 	hints.ai_flags = AI_CANONNAME;
@@ -179,12 +180,17 @@ void readloop(void) {
 	}
 }
 
+
 void sig_alrm(int signo) {
+	if(num_sent >= 3) 
+		exit(0);
+	num_sent++;
 	send_v4();
-	//alarm(1);
 	ualarm(500000, 0);
 	return ;
+	
 }
+
 
 
 void proc_v4 (char *ptr, ssize_t len, struct msghdr *msg, struct timeval *tvrecv) {
