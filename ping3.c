@@ -1,7 +1,7 @@
-/* 
+/*
  * not using signal mechenism anymore, import "internal" parameter to measure packet sending timeing
  * send packet every 300ms, packet timeout 500ms
- * 
+ *
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -29,9 +29,7 @@ char recvbuf[BUFSIZE];
 /*localhost dotted format address */
 char h[128];
 int nsent = 0;
-int num_sent = 0; /* send up to 3 times*/
 /* 300msごとにpacketを送る */
-long interval = 300;
 
 struct addrinfo hints;
 struct addrinfo *res;
@@ -65,7 +63,7 @@ int main(int argc, char **argv) {
 	host = argv[1];
 	pid = getpid() & 0xffff;
 
-//	signal(SIGALRM, sig_alrm); 
+//	signal(SIGALRM, sig_alrm);
 
 	bzero(&hints, sizeof(struct addrinfo));
 	hints.ai_flags = AI_CANONNAME;
@@ -73,16 +71,16 @@ int main(int argc, char **argv) {
 		fprintf(stderr, "getaddrinfo: %s\n",gai_strerror(n));
 		exit (1);
 	}
-	
-	sin = (struct sockaddr_in *)(res->ai_addr);	
+
+	sin = (struct sockaddr_in *)(res->ai_addr);
 	switch (sin->sin_family) {
-		case AF_INET: 
+		case AF_INET:
 			if(inet_ntop(AF_INET,&(sin->sin_addr), h, 128) == NULL) {
 				perror("inet_ntop");
 				exit (1);
 			}
 			break;
-		
+
 		default:
 			perror("Not IPv4 address");
 			exit (1);
@@ -136,7 +134,7 @@ void send_v4(void) {
 	}
 	len = 8 + datalen;
 	icmp->icmp_cksum = 0;
-	icmp->icmp_cksum = in_cksum((u_short *)icmp,len); 
+	icmp->icmp_cksum = in_cksum((u_short *)icmp,len);
 
 	sasend = res->ai_addr;
 	salen = res->ai_addrlen;
@@ -153,9 +151,7 @@ void readloop(void) {
 	struct iovec iov;
 	/*packetが戻ってきた時間を記録*/
 	struct timeval tval;
-	/* packetを送る間隔を計算するため */
-	long lt;
-	
+
 
 	// create socket from here
 	if(res->ai_family == AF_INET) {
@@ -169,13 +165,13 @@ void readloop(void) {
 		exit (1);
 	}
 	setuid(getuid());
-	
+
 	size = 60 * 1024;
 	setsockopt(sockfd, SOL_SOCKET, SO_RCVBUF, &size, sizeof(size));
 //	sig_alrm(SIGALRM); /* send the first packet */
-	lt = time_diff(&current_time, &last_send_time);
-	if(lt < interval) goto wait_for_reply;
-	
+    while(num_sent < 4) {
+        send_v4();
+        wait_for_reply(5000);
 
 
 	iov.iov_base = recvbuf;
@@ -188,7 +184,7 @@ void readloop(void) {
 	for( ; ; ) {/* now receive message after sending packet */
 		n = recvmsg(sockfd, &msg, 0);
 		if( n < 0) {
-			if(errno == EINTR ) 
+			if(errno == EINTR )
 				continue;
 			else {
 				perror("recvmsg");
@@ -201,27 +197,7 @@ void readloop(void) {
 		}
 		proc_v4(recvbuf, n, &msg, &tval);
 	}
-
-wait_for_reply:
-
-
-
 }
-
-
-/*
-void sig_alrm(int signo) {
-	if(num_sent >= 3) 
-		exit(0);
-	num_sent++;
-	send_v4();
-	ualarm(500000, 0);
-	return ;
-	
-}
-*/
-
-
 
 void proc_v4 (char *ptr, ssize_t len, struct msghdr *msg, struct timeval *tvrecv) {
 	int hlenl, icmplen;
@@ -236,7 +212,7 @@ void proc_v4 (char *ptr, ssize_t len, struct msghdr *msg, struct timeval *tvrecv
 	if(ip->ip_p != IPPROTO_ICMP )
 		return;		/*second, check protocol */
 	icmp = (struct icmp *)(ptr + hlenl); /* start of icmp header */
-	if((icmplen = len - hlenl) < 8) 
+	if((icmplen = len - hlenl) < 8)
 		return ;
 	if(icmp->icmp_type == ICMP_ECHOREPLY) {
 		if(icmp->icmp_id != pid)
@@ -247,7 +223,7 @@ void proc_v4 (char *ptr, ssize_t len, struct msghdr *msg, struct timeval *tvrecv
 		tv_sub(tvrecv,tvsend);
 		rtt = tvrecv->tv_sec * 1000.0 + tvrecv->tv_usec/1000.0;
 		printf("%d bytes from %s: seq=%u, ttl=%d, rtt=%.3f ms\n",icmplen, h, icmp->icmp_seq, ip->ip_ttl, rtt);
-		
+
 	}
 }
 
@@ -257,11 +233,11 @@ void tv_sub(struct timeval *out, struct timeval *in) {
 		out->tv_usec += 100000;
 	}
 	out->tv_sec -= in->tv_sec;
-}	
+}
 
 long time_diff(struct timeval *a, struct timeval *b) {
 	long sec_diff = a->tv_sec - b->tv_sec;
-	if(sec_diff == 0) 
+	if(sec_diff == 0)
 		return (a->tv_usec - b->tv_usec);
 	else if(sec_diff < 100)
 		return (sec_diff * 1000 + a->tv_usec - b->tv_usec);
@@ -301,7 +277,7 @@ select_again:
 	readable = select(sockfd+1, &readset, NULL, NULL, &to);
 	/* if error happens on select() function*/
 	if(readable < 0) {
-		if(errno == EINTR) 
+		if(errno == EINTR)
 			goto select_again;
 		else {
 			perror("select() error");
