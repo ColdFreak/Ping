@@ -1,7 +1,14 @@
+<<<<<<< HEAD
 /*
  * not using signal mechenism anymore, import "internal" parameter to measure packet sending timeing
  * send packet every 300ms, packet timeout 500ms
  *
+=======
+/* 
+ * not using signal mechenism anymore, import "internal" parameter to measure packet sending timeing
+ * send packet every 300ms, packet timeout 500ms
+ * 
+>>>>>>> 61c50e40ed5aa5b41917fff1330855c8b7f669fd
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -29,7 +36,6 @@ char recvbuf[BUFSIZE];
 /*localhost dotted format address */
 char h[128];
 int nsent = 0;
-/* 300msごとにpacketを送る */
 
 struct addrinfo hints;
 struct addrinfo *res;
@@ -62,8 +68,6 @@ int main(int argc, char **argv) {
 
 	host = argv[1];
 	pid = getpid() & 0xffff;
-
-//	signal(SIGALRM, sig_alrm);
 
 	bzero(&hints, sizeof(struct addrinfo));
 	hints.ai_flags = AI_CANONNAME;
@@ -152,7 +156,6 @@ void readloop(void) {
 	/*packetが戻ってきた時間を記録*/
 	struct timeval tval;
 
-
 	// create socket from here
 	if(res->ai_family == AF_INET) {
 		if((sockfd = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP)) < 0) {
@@ -169,9 +172,14 @@ void readloop(void) {
 	size = 60 * 1024;
 	setsockopt(sockfd, SOL_SOCKET, SO_RCVBUF, &size, sizeof(size));
 //	sig_alrm(SIGALRM); /* send the first packet */
+
     while(num_sent < 4) {
         send_v4();
         wait_for_reply(5000);
+
+
+	lt = time_diff(&current_time, &last_send_time);
+	if(lt < interval) goto wait_for_reply;
 
 
 	iov.iov_base = recvbuf;
@@ -197,8 +205,31 @@ void readloop(void) {
 		}
 		proc_v4(recvbuf, n, &msg, &tval);
 	}
+
+wait_for_reply:
+
+
+
 }
 
+<<<<<<< HEAD
+=======
+
+/*
+void sig_alrm(int signo) {
+	if(num_sent >= 3) 
+		exit(0);
+	num_sent++;
+	send_v4();
+	ualarm(500000, 0);
+	return ;
+	
+}
+*/
+
+
+
+>>>>>>> 61c50e40ed5aa5b41917fff1330855c8b7f669fd
 void proc_v4 (char *ptr, ssize_t len, struct msghdr *msg, struct timeval *tvrecv) {
 	int hlenl, icmplen;
 	struct ip *ip;
@@ -233,11 +264,19 @@ void tv_sub(struct timeval *out, struct timeval *in) {
 		out->tv_usec += 100000;
 	}
 	out->tv_sec -= in->tv_sec;
+<<<<<<< HEAD
 }
 
 long time_diff(struct timeval *a, struct timeval *b) {
 	long sec_diff = a->tv_sec - b->tv_sec;
 	if(sec_diff == 0)
+=======
+}	
+
+long time_diff(struct timeval *a, struct timeval *b) {
+	long sec_diff = a->tv_sec - b->tv_sec;
+	if(sec_diff == 0) 
+>>>>>>> 61c50e40ed5aa5b41917fff1330855c8b7f669fd
 		return (a->tv_usec - b->tv_usec);
 	else if(sec_diff < 100)
 		return (sec_diff * 1000 + a->tv_usec - b->tv_usec);
@@ -277,7 +316,11 @@ select_again:
 	readable = select(sockfd+1, &readset, NULL, NULL, &to);
 	/* if error happens on select() function*/
 	if(readable < 0) {
+<<<<<<< HEAD
 		if(errno == EINTR)
+=======
+		if(errno == EINTR) 
+>>>>>>> 61c50e40ed5aa5b41917fff1330855c8b7f669fd
 			goto select_again;
 		else {
 			perror("select() error");
