@@ -1,7 +1,7 @@
 /* 
- * icmp request 3回しか送らない
- * なのでnum_sent を定義する
- * sig_alrm() 関数の中にnum_sent を判断する 
+ * not using signal mechenism anymore, import "internal" parameter to measure packet sending timeing
+ * send packet every 300ms, packet timeout 500ms
+ * 
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -25,22 +25,30 @@ char *host;
 int sockfd;
 pid_t pid;
 int datalen = 56;
-char sendbuf[BUFSIZE];
+char recvbuf[BUFSIZE];
+/*localhost dotted format address */
 char h[128];
 int nsent = 0;
 int num_sent = 0; /* send up to 3 times*/
+/* 300msごとにpacketを送る */
+long interval = 300;
 
 struct addrinfo hints;
 struct addrinfo *res;
+/* remote host address struct */
 struct sockaddr *sasend;
 struct sockaddr *sarecv;
+struct timeval current_time;
+struct timeval last_send_time;
 
 uint16_t in_cksum(uint16_t *addr, int len);
-void sig_alrm(int signo);
+//void sig_alrm(int signo);
 void send_v4(void);
 void readloop(void);
 void tv_sub(struct timeval *out, struct timeval *in);
 void proc_v4 (char *ptr, ssize_t len, struct msghdr *msg, struct timeval *tvrecv);
+int wait_for_reply(long wait_time);
+int recving_time(int sockfd, char *buf, int len, struct sockaddr *response, long timeout);
 
 int main(int argc, char **argv) {
 	struct icmp *icmp;
@@ -57,7 +65,7 @@ int main(int argc, char **argv) {
 	host = argv[1];
 	pid = getpid() & 0xffff;
 
-	signal(SIGALRM, sig_alrm); 
+//	signal(SIGALRM, sig_alrm); 
 
 	bzero(&hints, sizeof(struct addrinfo));
 	hints.ai_flags = AI_CANONNAME;
@@ -79,7 +87,15 @@ int main(int argc, char **argv) {
 			perror("Not IPv4 address");
 			exit (1);
 	}
+
+	if(gettimeofday(&current_time,0) < 0) {
+		perror("gettimeofday error");
+		exit(1);
+	}
+	last_send_time.tv_sec = current_time.tv_sec -10000;
+
 	printf("PING %s (%s): %d data bytes\n",res->ai_canonname ? res->ai_canonname:h, h, datalen);
+
 	readloop();
 	return 0;
 }
@@ -105,6 +121,7 @@ uint16_t in_cksum(uint16_t *addr, int len) {
 }
 void send_v4(void) {
 	struct icmp *icmp;
+	char sendbuf[BUFSIZE];
 	int len;
 	socklen_t salen;
 	icmp = (struct icmp *)sendbuf;
@@ -131,11 +148,13 @@ void send_v4(void) {
 void readloop(void) {
 	ssize_t n;
 	int size;
-	char recvbuf[BUFSIZE];
 	char controlbuf[BUFSIZE];
 	struct msghdr msg;
 	struct iovec iov;
+	/*packetが戻ってきた時間を記録*/
 	struct timeval tval;
+	/* packetを送る間隔を計算するため */
+	long lt;
 	
 
 	// create socket from here
@@ -153,7 +172,11 @@ void readloop(void) {
 	
 	size = 60 * 1024;
 	setsockopt(sockfd, SOL_SOCKET, SO_RCVBUF, &size, sizeof(size));
-	sig_alrm(SIGALRM); /* send the first packet */
+//	sig_alrm(SIGALRM); /* send the first packet */
+	lt = time_diff(&current_time, &last_send_time);
+	if(lt < interval) goto wait_for_reply;
+	
+
 
 	iov.iov_base = recvbuf;
 	iov.iov_len = sizeof(recvbuf);
@@ -178,9 +201,15 @@ void readloop(void) {
 		}
 		proc_v4(recvbuf, n, &msg, &tval);
 	}
+
+wait_for_reply:
+
+
+
 }
 
 
+/*
 void sig_alrm(int signo) {
 	if(num_sent >= 3) 
 		exit(0);
@@ -190,6 +219,7 @@ void sig_alrm(int signo) {
 	return ;
 	
 }
+*/
 
 
 
@@ -228,3 +258,59 @@ void tv_sub(struct timeval *out, struct timeval *in) {
 	}
 	out->tv_sec -= in->tv_sec;
 }	
+
+long time_diff(struct timeval *a, struct timeval *b) {
+	long sec_diff = a->tv_sec - b->tv_sec;
+	if(sec_diff == 0) 
+		return (a->tv_usec - b->tv_usec);
+	else if(sec_diff < 100)
+		return (sec_diff * 1000 + a->tv_usec - b->tv_usec);
+	else
+		return (sec_diff * 1000);
+}
+
+
+int wait_for_reply(long wait_time) {
+	/*timeout or not */
+	int result;
+
+	result = recving_time(sockfd,recvbuf,sizeof(recvbuf),&sarecv, wait_time);
+	/* select() function in recving_time timeout */
+	if(result < 0)
+		return 0;
+}
+
+int recving_time(int sockfd, char *buf, int len, struct sockaddr *response, long timeout) {
+	/* timeout structure*/
+	struct timeval to;
+	int readable;
+	fd_set readset;
+select_again:
+	if(timeout < 1000) {
+		to.tv_sec = 0;
+		to.tv_usec = timeout;
+	}
+	else {
+		to.tv_sec = timeout / 1000;
+		to.tv_usec = timeout % 1000
+	}
+
+	FD_ZERO(&readset);
+	FD_SET(sockfd, &readset);
+
+	readable = select(sockfd+1, &readset, NULL, NULL, &to);
+	/* if error happens on select() function*/
+	if(readable < 0) {
+		if(errno == EINTR) 
+			goto select_again;
+		else {
+			perror("select() error");
+			exit(1);
+		}
+	}
+
+	/* select() returns 0 means timeout*/
+	if(readable == 0)
+		return -1;
+
+
