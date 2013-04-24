@@ -1,14 +1,7 @@
-<<<<<<< HEAD
 /*
  * not using signal mechenism anymore, import "internal" parameter to measure packet sending timeing
  * send packet every 300ms, packet timeout 500ms
  *
-=======
-/* 
- * not using signal mechenism anymore, import "internal" parameter to measure packet sending timeing
- * send packet every 300ms, packet timeout 500ms
- * 
->>>>>>> 61c50e40ed5aa5b41917fff1330855c8b7f669fd
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -33,6 +26,7 @@ int sockfd;
 pid_t pid;
 int datalen = 56;
 char recvbuf[BUFSIZE];
+char sendbuf[BUFSIZE];
 /*localhost dotted format address */
 char h[128];
 int nsent = 0;
@@ -42,15 +36,16 @@ struct addrinfo *res;
 /* remote host address struct */
 struct sockaddr *sasend;
 struct sockaddr *sarecv;
-struct timeval current_time;
-struct timeval last_send_time;
+/*packetが戻ってきた時間を記録*/
+struct timeval tvrecv;
+struct timeval tvsend;
 
 uint16_t in_cksum(uint16_t *addr, int len);
 //void sig_alrm(int signo);
 void send_v4(void);
 void readloop(void);
 void tv_sub(struct timeval *out, struct timeval *in);
-void proc_v4 (char *ptr, ssize_t len, struct msghdr *msg, struct timeval *tvrecv);
+void proc_v4 (char *ptr, ssize_t len, struct timeval *tvrecv);
 int wait_for_reply(long wait_time);
 int recving_time(int sockfd, char *buf, int len, struct sockaddr *response, long timeout);
 
@@ -90,40 +85,14 @@ int main(int argc, char **argv) {
 			exit (1);
 	}
 
-	if(gettimeofday(&current_time,0) < 0) {
-		perror("gettimeofday error");
-		exit(1);
-	}
-	last_send_time.tv_sec = current_time.tv_sec -10000;
-
 	printf("PING %s (%s): %d data bytes\n",res->ai_canonname ? res->ai_canonname:h, h, datalen);
 
 	readloop();
 	return 0;
 }
 
-uint16_t in_cksum(uint16_t *addr, int len) {
-	int nleft = len;
-	uint32_t sum = 0;
-	uint16_t *w = addr;
-	uint16_t answer = 0;
-
-	while(nleft > 1) {
-		sum += *w++;
-		nleft -= 2;
-	}
-	if (nleft == 1) {
-		*(unsigned char *)(&answer) = *(unsigned char *)w;
-		sum += answer;
-	}
-	sum = (sum >> 16) + (sum & 0xffff);
-	sum += (sum >> 16);
-	answer = ~sum;
-	return (answer);
-}
 void send_v4(void) {
 	struct icmp *icmp;
-	char sendbuf[BUFSIZE];
 	int len;
 	socklen_t salen;
 	icmp = (struct icmp *)sendbuf;
@@ -150,11 +119,6 @@ void send_v4(void) {
 void readloop(void) {
 	ssize_t n;
 	int size;
-	char controlbuf[BUFSIZE];
-	struct msghdr msg;
-	struct iovec iov;
-	/*packetが戻ってきた時間を記録*/
-	struct timeval tval;
 
 	// create socket from here
 	if(res->ai_family == AF_INET) {
@@ -171,66 +135,18 @@ void readloop(void) {
 
 	size = 60 * 1024;
 	setsockopt(sockfd, SOL_SOCKET, SO_RCVBUF, &size, sizeof(size));
-//	sig_alrm(SIGALRM); /* send the first packet */
 
-    while(num_sent < 4) {
+    while(nsent < 4) {
         send_v4();
-        wait_for_reply(5000);
+        if(wait_for_reply(5000)) 
+			break;
 
-
-	lt = time_diff(&current_time, &last_send_time);
-	if(lt < interval) goto wait_for_reply;
-
-
-	iov.iov_base = recvbuf;
-	iov.iov_len = sizeof(recvbuf);
-	msg.msg_name = sarecv;
-	msg.msg_iov = &iov;
-	msg.msg_iovlen = 1;
-	msg.msg_control = controlbuf;
-
-	for( ; ; ) {/* now receive message after sending packet */
-		n = recvmsg(sockfd, &msg, 0);
-		if( n < 0) {
-			if(errno == EINTR )
-				continue;
-			else {
-				perror("recvmsg");
-				exit(1);
-			}
-		}
-		if(gettimeofday(&tval, NULL) < 0) {
-			perror("gettimeofday");
-			exit (1);
-		}
-		proc_v4(recvbuf, n, &msg, &tval);
 	}
-
-wait_for_reply:
-
-
-
 }
 
-<<<<<<< HEAD
-=======
-
-/*
-void sig_alrm(int signo) {
-	if(num_sent >= 3) 
-		exit(0);
-	num_sent++;
-	send_v4();
-	ualarm(500000, 0);
-	return ;
-	
-}
-*/
 
 
-
->>>>>>> 61c50e40ed5aa5b41917fff1330855c8b7f669fd
-void proc_v4 (char *ptr, ssize_t len, struct msghdr *msg, struct timeval *tvrecv) {
+void proc_v4 (char *ptr, ssize_t len, struct timeval *tvrecv) {
 	int hlenl, icmplen;
 	struct ip *ip;
 	struct icmp *icmp;
@@ -264,19 +180,11 @@ void tv_sub(struct timeval *out, struct timeval *in) {
 		out->tv_usec += 100000;
 	}
 	out->tv_sec -= in->tv_sec;
-<<<<<<< HEAD
 }
 
 long time_diff(struct timeval *a, struct timeval *b) {
 	long sec_diff = a->tv_sec - b->tv_sec;
-	if(sec_diff == 0)
-=======
-}	
-
-long time_diff(struct timeval *a, struct timeval *b) {
-	long sec_diff = a->tv_sec - b->tv_sec;
 	if(sec_diff == 0) 
->>>>>>> 61c50e40ed5aa5b41917fff1330855c8b7f669fd
 		return (a->tv_usec - b->tv_usec);
 	else if(sec_diff < 100)
 		return (sec_diff * 1000 + a->tv_usec - b->tv_usec);
@@ -288,14 +196,22 @@ long time_diff(struct timeval *a, struct timeval *b) {
 int wait_for_reply(long wait_time) {
 	/*timeout or not */
 	int result;
+	ssize_t n;
 
-	result = recving_time(sockfd,recvbuf,sizeof(recvbuf),&sarecv, wait_time);
+	result = recving_time(sockfd,recvbuf,sizeof(recvbuf),sarecv, wait_time);
 	/* select() function in recving_time timeout */
 	if(result < 0)
 		return 0;
+	n = sizeof(recvbuf);
+	proc_v4(recvbuf, n, &tvrecv);
+	return 1;
 }
 
-int recving_time(int sockfd, char *buf, int len, struct sockaddr *response, long timeout) {
+int recving_time(int sockfd, char *buf, int len, struct sockaddr *sarecv, long timeout) {
+	ssize_t n;
+	char controlbuf[BUFSIZE];
+	struct msghdr msg;
+	struct iovec iov;
 	/* timeout structure*/
 	struct timeval to;
 	int readable;
@@ -307,7 +223,7 @@ select_again:
 	}
 	else {
 		to.tv_sec = timeout / 1000;
-		to.tv_usec = timeout % 1000
+		to.tv_usec = timeout % 1000;
 	}
 
 	FD_ZERO(&readset);
@@ -316,11 +232,7 @@ select_again:
 	readable = select(sockfd+1, &readset, NULL, NULL, &to);
 	/* if error happens on select() function*/
 	if(readable < 0) {
-<<<<<<< HEAD
 		if(errno == EINTR)
-=======
-		if(errno == EINTR) 
->>>>>>> 61c50e40ed5aa5b41917fff1330855c8b7f669fd
 			goto select_again;
 		else {
 			perror("select() error");
@@ -332,4 +244,50 @@ select_again:
 	if(readable == 0)
 		return -1;
 
+	iov.iov_base = recvbuf;
+	iov.iov_len = sizeof(recvbuf);
+	msg.msg_name = sarecv;
+	msg.msg_iov = &iov;
+	msg.msg_iovlen = 1;
+	msg.msg_control = controlbuf;
+
+	for(;;) {
+		n = recvmsg(sockfd, &msg,0);
+		if( n < 0) 
+			if(errno == EINTR )
+				continue;
+			else {
+				perror("recvmsg");
+				exit(1);
+			}
+		else
+			break;
+	}
+	// write down packet recived time
+	if(gettimeofday(&tvrecv, 0) < 0) {
+		perror("gettimeofday");
+		exit(1);
+	}
+	return n;
+}
+
+uint16_t in_cksum(uint16_t *addr, int len) {
+	int nleft = len;
+	uint32_t sum = 0;
+	uint16_t *w = addr;
+	uint16_t answer = 0;
+
+	while(nleft > 1) {
+		sum += *w++;
+		nleft -= 2;
+	}
+	if (nleft == 1) {
+		*(unsigned char *)(&answer) = *(unsigned char *)w;
+		sum += answer;
+	}
+	sum = (sum >> 16) + (sum & 0xffff);
+	sum += (sum >> 16);
+	answer = ~sum;
+	return (answer);
+}
 
