@@ -38,14 +38,14 @@ struct ipheader {
 	#define IP_MF 0x2000            /* more fragments flag */
     #define IP_OFFMASK 0x1fff       /* mask for fragmenting bits */
 	u_char  ip_ttl;                 /* time to live */
-    	u_char  ip_p;                   /* protocol */
+   	u_char  ip_p;                   /* protocol */
 	u_short ip_sum;                 /* checksum */
 	struct  in_addr ip_src,ip_dst;  /* source and dest address */
 };
 #define IP_HL(ip)               (((ip)->ip_vhl) & 0x0f)
 #define IP_V(ip)                (((ip)->ip_vhl) >> 4)
 
-struct sniff_tcp {
+struct tcpheader {
 	u_short th_sport;               /* source port */
 	u_short th_dport;               /* destination port */
 	u_int th_seq;                 /* sequence number */
@@ -153,6 +153,9 @@ void send_v4(void) {
 	struct ipheader *iph;
 	struct tcpheader *tcph;
 	struct pseudo_hdr *phdr;
+	struct sockaddr_in rh;
+	struct in_addr local;
+	struct in_addr remote;
 
 	int len;
 	socklen_t salen;
@@ -181,7 +184,22 @@ void send_v4(void) {
 	tcph->th_sum = 0; // will compute later
 	tcph->th_urp = 0; // no urgent pointer 
 	
-	phdr->src =  
+	inet_aton(local_ip, &local);
+	inet_aton(remote_ip, &remote);
+	phdr->src = local.s_addr;
+	phdr->dst = remote.s_addr;
+	phdr->mbz = 0;
+	phdr->proto = IPPROTO_TCP;
+	phdr->len = ntohs(0x14);
+	
+	tcph->th_sum = in_cksum((unsigned short *)tcph, sizeof(struct pseudo_hdr)+sizeof(struct tcpheader));
+	int one = 1;
+	const int *val = &one;
+	if(setsockopt(sockfd, IPPROTO_IP, IP_HDRINCL, val, sizeof(one)) < 0)
+		fprintf(stderr, "Warning: Cannot set HDRINCL for port 0");
+
+
+	
 
 
 
@@ -385,15 +403,15 @@ void *get_local_ip(char *buf) {
 
     int status = pcap_findalldevs(&alldevs, errbuf);
     if(status != 0) {
-	printf("%s\n",errbuf);
-	return NULL;
+		printf("%s\n",errbuf);
+		return NULL;
     }
     for(d = alldevs; d != NULL; d= d->next) {
-	for(a = d->addresses; a!= NULL; a = a->next) {
-    	    if(a->addr->sa_family == AF_INET)  {
-		strcpy(buf, inet_ntoa(((struct sockaddr_in*)a->addr)->sin_addr));
-		return;
-            }
-	}
+		for(a = d->addresses; a!= NULL; a = a->next) {
+			if(a->addr->sa_family == AF_INET)  {
+				strcpy(buf, inet_ntoa(((struct sockaddr_in*)a->addr)->sin_addr));
+				return;
+			}
+		}
     }
 }
