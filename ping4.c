@@ -152,11 +152,13 @@ int main(int argc, char **argv) {
 void send_v4(void) {
 	struct ipheader *iph;
 	struct tcpheader *tcph;
+	struct pseudo_hdr *phdr;
 
 	int len;
 	socklen_t salen;
 	iph = (struct ipheader *)sendbuf;
 	tcph = (struct tcpheader *)(sendbuf+sizeof(struct ipheader));
+	phdr = (struct pseudo_hdr *)(sendbuf+sizeof(struct ipheader)+sizeof(struct tcpheader));
 
 	iph->ip_vhl = 0x45; 
 	iph->ip_tos = 0; /* type of service -not needed */
@@ -169,6 +171,19 @@ void send_v4(void) {
 	iph->ip_dst = inet_addr(remote_ip);
 	iph->ip_sum = in_cksum((unsigned short *)iph, sizeof(struct ipheader));
 	
+	tcp->th_sport=htons(1234); // arbitrary port 
+	tcp->th_dport = htons(0);
+	tcph->th_seq= random(); // random return long ?
+	tcph->the_ack = 0;
+	tcph->th_offx2 = 0x50; // 5 offset ( 8 0s reserved)
+	tcph->th_flags = TH_SYN;
+	tcph->th_win = 65535;
+	tcph->th_sum = 0; // will compute later
+	tcph->th_urp = 0; // no urgent pointer 
+	
+	phdr->src =  
+
+
 
 	memset(icmp->icmp_data,0, datalen);
 	if(gettimeofday((struct timeval *)icmp->icmp_data, NULL) < 0) {
