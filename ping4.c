@@ -198,6 +198,11 @@ void send_v4(void) {
 	if(setsockopt(sockfd, IPPROTO_IP, IP_HDRINCL, val, sizeof(one)) < 0)
 		fprintf(stderr, "Warning: Cannot set HDRINCL for port 0");
 
+	if(sendto(sockfd, sendbuf, iph->ip_len, 0, (struct sockaddr*)rh, sizeof(struct sockaddr_in)) < 0) 
+		fprintf(stderr, "Error sending datagram for port 0");
+	
+	
+
 
 	
 
