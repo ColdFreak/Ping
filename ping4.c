@@ -19,7 +19,9 @@
 #include <pcap.h>
 
 #define BUFSIZE	1500
+int src_port = 5555;
 
+#define ETHERNET_SIZE 14
 #define ETHER_ADDR_LEN	6
 struct ethernetheader {
 	u_char  ether_dhost[ETHER_ADDR_LEN];    /* destination host address */
@@ -68,11 +70,11 @@ struct tcpheader {
 };
 
 struct pseudo_hdr {
-	u_int32_t src;          /* 32bit source ip address*/
-	u_int32_t dst;          /* 32bit destination ip address */	
-	u_char mbz;             /* 8 reserved bits (all 0) 	*/
-	u_char proto;           /* protocol field of ip header */
-	u_int16_t len;          /* tcp length (both header and data */
+	unsigned int src;          /* 32bit source ip address*/
+	unsigned int dst;          /* 32bit destination ip address */	
+	unsigned char mbz;             /* 8 reserved bits (all 0) 	*/
+	unsigned char proto;           /* protocol field of ip header */
+	unsigned short len;          /* tcp length (both header and data */
 };
 
 char *host;
@@ -91,8 +93,9 @@ int nsent = 0;
 
 struct addrinfo hints;
 struct addrinfo *res;
-/* remote host address struct */
-struct sockaddr *sasend;
+struct sockaddr local; // localhost sockaddr struture
+struct sockaddr *lh; // localhost
+struct sockaddr *sasend; /* remote host address struct */
 struct sockaddr *sarecv;
 /*packetが戻ってきた時間を記録*/
 struct timeval tvrecv;
@@ -105,10 +108,9 @@ void tv_sub(struct timeval *out, struct timeval *in);
 void proc_v4 (char *ptr, ssize_t len, struct timeval *tvrecv);
 int wait_for_reply(long wait_time);
 int recving_time(int sockfd, char *buf, int len, struct sockaddr *response, long timeout);
-void *get_local_ip(char *buf);
+void *get_local_ip(struct sockaddr *local);
 
 int main(int argc, char **argv) {
-	struct icmp *icmp;
 	struct sockaddr_in *remote_host;
 	socklen_t salen;
 	int n; /* getaddrinfo return value */
@@ -118,6 +120,14 @@ int main(int argc, char **argv) {
 		perror("usage: ./ping <hostname>");
 		exit (1);
 	}
+	/*
+	 	struct sockaddr {
+			unsigned short sa_family;
+			char sa_data[14];
+		}
+	 */
+	get_local_ip(&local);
+	lh = &local;
 
 	host = argv[1];
 	pid = getpid() & 0xffff;
@@ -129,10 +139,10 @@ int main(int argc, char **argv) {
 		exit (1);
 	}
 
-	remote_host = (struct sockaddr_in *)(res->ai_addr);
-	switch (remote_host->sin_family) {
+	sasend = res->ai_addr;
+	switch (sasend->sa_family) {
 		case AF_INET:
-			if(inet_ntop(AF_INET,&(remote_host->sin_addr), remote_ip, 128) == NULL) {
+			if(inet_ntop(AF_INET,&(((struct sockaddr_in*)sasend)->sin_addr), remote_ip, 128) == NULL) {
 				perror("inet_ntop");
 				exit (1);
 			}
@@ -143,7 +153,8 @@ int main(int argc, char **argv) {
 			exit (1);
 	}
 
-	printf("PING %s (%s): %d data bytes\n",res->ai_canonname ? res->ai_canonname:h, h, datalen);
+
+	printf("PING %s (%s): %d data bytes\n",res->ai_canonname ? res->ai_canonname:remote_ip, remote_ip, datalen);
 
 	readloop();
 	return 0;
@@ -153,8 +164,6 @@ void send_v4(void) {
 	struct ipheader *iph;
 	struct tcpheader *tcph;
 	struct pseudo_hdr *phdr;
-	struct sockaddr_in rh;
-	struct in_addr local;
 	struct in_addr remote;
 
 	int len;
@@ -166,63 +175,54 @@ void send_v4(void) {
 	iph->ip_vhl = 0x45; 
 	iph->ip_tos = 0; /* type of service -not needed */
 	iph->ip_len = sizeof(struct ipheader)+sizeof(struct tcpheader);
-	iph->ip_id = htons(pid);
+	iph->ip_id = pid;
 	iph->ip_off = 0; /* no fragmentation */
 	iph->ip_ttl = 255; 	
 	iph->ip_p = IPPROTO_TCP;
-	iph->ip_src = inet_addr(local_ip);
-	iph->ip_dst = inet_addr(remote_ip);
+	iph->ip_src = ((struct sockaddr_in*)lh)->sin_addr;
+	iph->ip_dst = ((struct sockaddr_in*)sasend)->sin_addr;
 	iph->ip_sum = in_cksum((unsigned short *)iph, sizeof(struct ipheader));
 	
-	tcp->th_sport=htons(1234); // arbitrary port 
-	tcp->th_dport = htons(0);
+	tcph->th_sport=htons(++src_port); // arbitrary port 
+
+	tcph->th_dport = htons(0);
 	tcph->th_seq= random(); // random return long ?
-	tcph->the_ack = 0;
+	tcph->th_ack = 0;
 	tcph->th_offx2 = 0x50; // 5 offset ( 8 0s reserved)
 	tcph->th_flags = TH_SYN;
 	tcph->th_win = 65535;
 	tcph->th_sum = 0; // will compute later
 	tcph->th_urp = 0; // no urgent pointer 
 	
-	inet_aton(local_ip, &local);
-	inet_aton(remote_ip, &remote);
-	phdr->src = local.s_addr;
-	phdr->dst = remote.s_addr;
+	/*
+	 	struct sockaddr_in {
+			short sin_family;
+			unsigned short sin_port;
+			struct in_addr sin_addr;
+			char sin_zero[8];
+		};
+
+		struct in_addr {
+			unsigned long s_addr;
+		};
+	 */
+	phdr->src = ((struct sockaddr_in*)lh)->sin_addr.s_addr;
+	phdr->dst = ((struct sockaddr_in*)sasend)->sin_addr.s_addr;
 	phdr->mbz = 0;
 	phdr->proto = IPPROTO_TCP;
-	phdr->len = ntohs(0x14);
+	phdr->len = ntohs(sizeof(struct tcpheader));
 	
-	tcph->th_sum = in_cksum((unsigned short *)tcph, sizeof(struct pseudo_hdr)+sizeof(struct tcpheader));
-	int one = 1;
-	const int *val = &one;
-	if(setsockopt(sockfd, IPPROTO_IP, IP_HDRINCL, val, sizeof(one)) < 0)
-		fprintf(stderr, "Warning: Cannot set HDRINCL for port 0");
-
-	if(sendto(sockfd, sendbuf, iph->ip_len, 0, (struct sockaddr*)rh, sizeof(struct sockaddr_in)) < 0) 
-		fprintf(stderr, "Error sending datagram for port 0");
-	
-	
-
-
-	
-
-
-
-	memset(icmp->icmp_data,0, datalen);
-	if(gettimeofday((struct timeval *)icmp->icmp_data, NULL) < 0) {
-		perror("gettimeofday");
-		exit (1);
-	}
-	len = 8 + datalen;
-	icmp->icmp_cksum = 0;
-	icmp->icmp_cksum = in_cksum((u_short *)icmp,len);
+	tcph->th_sum = htons(in_cksum((unsigned short *)tcph, sizeof(struct pseudo_hdr)+sizeof(struct tcpheader)));
 
 	sasend = res->ai_addr;
 	salen = res->ai_addrlen;
-	if(sendto(sockfd, sendbuf, len, 0, sasend, salen) != len) {
-		perror("sendto");
-		exit(1);
-	}
+	if(sendto(sockfd, sendbuf, iph->ip_len, 0, sasend,salen)  < 0) 
+		fprintf(stderr, "Error sending datagram for port 0");
+#ifdef DEBUG
+	fprintf(stderr,"Sending the %dth packet and salen = %d\n",nsent, salen);
+#endif 
+	nsent++;
+
 }
 void readloop(void) {
 	ssize_t n;
@@ -243,43 +243,55 @@ void readloop(void) {
 
 	size = 60 * 1024;
 	setsockopt(sockfd, SOL_SOCKET, SO_RCVBUF, &size, sizeof(size));
+	int one = 1;
+	const int *val = &one;
+	if(setsockopt(sockfd, IPPROTO_IP, IP_HDRINCL, val, sizeof(one)) < 0)
+		fprintf(stderr, "Warning: Cannot set HDRINCL for port 0");
 
     while(nsent < 4) {
         send_v4();
-        if(wait_for_reply(5000)) 
-	    break;
-
+        wait_for_reply(1000);
     }
 }
 
 
 
 void proc_v4 (char *ptr, ssize_t len, struct timeval *tvrecv) {
-	int hlenl, icmplen;
-	struct ip *ip;
-	struct icmp *icmp;
+	int ip_size, tcp_size;
+	struct ipheader *ip;
+	struct tcpheader *tcp;
 	struct timeval *tvsend;
 	double rtt;
 
-	ip = (struct ip*)ptr;
+	ip = (struct ipheader*)ptr;
 	/* only check two fields of ip header, length and protocol */
-	hlenl = ip->ip_hl << 2; /* length of ip header */
-	if(ip->ip_p != IPPROTO_ICMP )
-		return;		/*second, check protocol */
-	icmp = (struct icmp *)(ptr + hlenl); /* start of icmp header */
-	if((icmplen = len - hlenl) < 8)
+	ip_size = IP_HL(ip) * 4; /* length of ip header */
+#ifdef DEBUG
+	fprintf(stderr, "ip_size = %d",ip_size);
+#endif
+	if(ip_size < 20) {
+		fprintf(stderr, "Invalid IP header length: %d\n",ip_size);
 		return ;
-	if(icmp->icmp_type == ICMP_ECHOREPLY) {
-		if(icmp->icmp_id != pid)
-			return;
-		if(icmplen < 16)
-			return;
-		tvsend = (struct timeval *)icmp->icmp_data;
-		tv_sub(tvrecv,tvsend);
-		rtt = tvrecv->tv_sec * 1000.0 + tvrecv->tv_usec/1000.0;
-		printf("%d bytes from %s: seq=%u, ttl=%d, rtt=%.3f ms\n",icmplen, h, icmp->icmp_seq, ip->ip_ttl, rtt);
-
 	}
+	if(ip->ip_p != IPPROTO_TCP ) {
+
+		fprintf(stderr,"Returned Packet is not TCP protocol\n");
+		return;		/*second, check protocol */
+	}
+	tcp = (struct tcpheader *)(ptr + ETHERNET_SIZE + ip_size); /* start of icmp header */
+
+#ifdef DEBUG
+	fprintf(stderr, "tcp_size = %d",tcp_size);
+#endif
+	if(tcp_size < 20) {
+		fprintf(stderr, "Invalid TCP header length: %d\n",tcp_size);
+		return ;
+	}
+
+	if(((tcp->th_flags & 0x04) == TH_RST ) && (tcp->th_flags & 0x10) == TH_ACK) 
+		fprintf(stdout, "RESET packet received.\n");
+
+
 }
 
 void tv_sub(struct timeval *out, struct timeval *in) {
@@ -311,6 +323,7 @@ int wait_for_reply(long wait_time) {
 	if(result < 0)
 		return 0;
 	n = sizeof(recvbuf);
+	fprintf(stderr, "n = %d\n",n);
 	proc_v4(recvbuf, n, &tvrecv);
 	return 1;
 }
@@ -324,6 +337,7 @@ int recving_time(int sockfd, char *buf, int len, struct sockaddr *sarecv, long t
 	struct timeval to;
 	int readable;
 	fd_set readset;
+
 select_again:
 	if(timeout < 1000) {
 		to.tv_sec = 0;
@@ -336,9 +350,11 @@ select_again:
 
 	FD_ZERO(&readset);
 	FD_SET(sockfd, &readset);
-
 	readable = select(sockfd+1, &readset, NULL, NULL, &to);
-	/* if error happens on select() function*/
+#ifdef DEBUG
+	fprintf(stderr, "readable is %d\n",readable);
+	fprintf(stderr, "sockfd = %d\n", sockfd);
+#endif
 	if(readable < 0) {
 		if(errno == EINTR)
 			goto select_again;
@@ -348,9 +364,9 @@ select_again:
 		}
 	}
 
-	/* select() returns 0 means timeout*/
-	if(readable == 0)
+	if(readable == 0)  {
 		return -1;
+	}
 
 	iov.iov_base = recvbuf;
 	iov.iov_len = sizeof(recvbuf);
@@ -361,6 +377,9 @@ select_again:
 
 	for(;;) {
 		n = recvmsg(sockfd, &msg,0);
+#ifdef DEBUG
+		fprintf(stderr, "recived %d bytes\n",n);
+#endif
 		if( n < 0) 
 			if(errno == EINTR )
 				continue;
@@ -370,12 +389,6 @@ select_again:
 			}
 		else
 			break;
-	}
-	// write down packet recived time
-	// tvrecv is a global variable
-	if(gettimeofday(&tvrecv, 0) < 0) {
-		perror("gettimeofday");
-		exit(1);
 	}
 	return n;
 }
@@ -400,12 +413,28 @@ uint16_t in_cksum(uint16_t *addr, int len) {
 	return (answer);
 }
 
-void *get_local_ip(char *buf) {
+void *get_local_ip(struct sockaddr *local) {
+/*
+ 	struct pcap_if {
+		struct pcap_if *next;
+		char *name;
+		char *description;
+		pcap_addr *addresses;
+		u_int flags;
+	};
 
+	struct pcap_addr {
+		struct pcap_addr *next;
+		struct sockaddr *addr;
+		struct sockaddr *netmask;
+		struct sockaddr *broadaddr;
+		struct sockaddr *dstaddr;
+	};
+ */
     pcap_if_t *alldevs;
     pcap_if_t *d;
     pcap_addr_t *a;
-
+	char errbuf[PCAP_ERRBUF_SIZE];
     int status = pcap_findalldevs(&alldevs, errbuf);
     if(status != 0) {
 		printf("%s\n",errbuf);
@@ -414,7 +443,7 @@ void *get_local_ip(char *buf) {
     for(d = alldevs; d != NULL; d= d->next) {
 		for(a = d->addresses; a!= NULL; a = a->next) {
 			if(a->addr->sa_family == AF_INET)  {
-				strcpy(buf, inet_ntoa(((struct sockaddr_in*)a->addr)->sin_addr));
+				memcpy(local, a->addr, sizeof(struct sockaddr));
 				return;
 			}
 		}
