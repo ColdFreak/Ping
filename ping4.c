@@ -19,7 +19,7 @@
 #include <pcap.h>
 
 #define BUFSIZE	1500
-int src_port = 5555;
+
 
 #define ETHERNET_SIZE 14
 #define ETHER_ADDR_LEN	6
@@ -83,11 +83,15 @@ pid_t pid;
 int datalen = 56;
 char recvbuf[BUFSIZE];
 char sendbuf[BUFSIZE];
+char pheader[BUFSIZE];
 
 // get local ipaddress using findalldevs() function
-char local_ip[20]; 
+char local_ip[17]; 
 //remote ip  dotted format address
-char remote_ip[20];
+char remote_ip[17];
+short src_port = 5555;
+short dst_port = 0;
+short pig_ack = 0;
 
 int nsent = 0;
 
@@ -164,36 +168,40 @@ void send_v4(void) {
 	struct ipheader *iph;
 	struct tcpheader *tcph;
 	struct pseudo_hdr *phdr;
-	struct in_addr remote;
-
-	int len;
+	int tcphdr_size = sizeof(struct tcpheader);
 	socklen_t salen;
 	iph = (struct ipheader *)sendbuf;
 	tcph = (struct tcpheader *)(sendbuf+sizeof(struct ipheader));
-	phdr = (struct pseudo_hdr *)(sendbuf+sizeof(struct ipheader)+sizeof(struct tcpheader));
 
+	memset(sendbuf, 0, sizeof(sendbuf));
 	iph->ip_vhl = 0x45; 
 	iph->ip_tos = 0; /* type of service -not needed */
 	iph->ip_len = sizeof(struct ipheader)+sizeof(struct tcpheader);
-	iph->ip_id = pid;
+	iph->ip_id = htons(pid);
 	iph->ip_off = 0; /* no fragmentation */
-	iph->ip_ttl = 255; 	
+	iph->ip_ttl = 64; 	
 	iph->ip_p = IPPROTO_TCP;
-	iph->ip_src = ((struct sockaddr_in*)lh)->sin_addr;
-	iph->ip_dst = ((struct sockaddr_in*)sasend)->sin_addr;
+	iph->ip_src.s_addr = ((struct sockaddr_in*)lh)->sin_addr.s_addr;
+	iph->ip_dst.s_addr = ((struct sockaddr_in*)sasend)->sin_addr.s_addr;
 	iph->ip_sum = in_cksum((unsigned short *)iph, sizeof(struct ipheader));
 	
 	tcph->th_sport=htons(++src_port); // arbitrary port 
 
-	tcph->th_dport = htons(0);
-	tcph->th_seq= random(); // random return long ?
-	tcph->th_ack = 0;
+	tcph->th_dport = htons(dst_port);
+	tcph->th_seq= htonl(31337); 
+	tcph->th_ack = htonl(pig_ack);
 	tcph->th_offx2 = 0x50; // 5 offset ( 8 0s reserved)
 	tcph->th_flags = TH_SYN;
-	tcph->th_win = 65535;
+	tcph->th_win = htons(65535);
 	tcph->th_sum = 0; // will compute later
 	tcph->th_urp = 0; // no urgent pointer 
 	
+	if(tcphdr_size % 4 != 0)
+		tcphdr_size = ((tcphdr_size % 4) + 1) * 4;
+	fprintf(stderr, "tcphdr_size %d\n",tcphdr_size);
+	tcphdr_size=40;
+	fprintf(stderr, "tcphdr_size %d\n",tcphdr_size);
+
 	/*
 	 	struct sockaddr_in {
 			short sin_family;
@@ -206,13 +214,19 @@ void send_v4(void) {
 			unsigned long s_addr;
 		};
 	 */
-	phdr->src = ((struct sockaddr_in*)lh)->sin_addr.s_addr;
-	phdr->dst = ((struct sockaddr_in*)sasend)->sin_addr.s_addr;
-	phdr->mbz = 0;
-	phdr->proto = IPPROTO_TCP;
-	phdr->len = ntohs(sizeof(struct tcpheader));
+	memset(pheader, 0x0, sizeof(pheader));
+	memcpy(&pheader, &(iph->ip_src.s_addr),4);
+	memcpy(&pheader, &(iph->ip_dst.s_addr),4);
+	pheader[8] = 0; // just to underline this zero byte specified by rfc
+	pheader[9] = (u_int16_t)iph->ip_p;
+	pheader[10] = (u_int16_t)(tcphdr_size & 0xFF00) >> 8;
+	pheader[11] = (u_int16_t)(tcphdr_size & 0x00FF);
+
+	memcpy(&pheader[12], tcph, sizeof(struct tcpheader));
+
+
 	
-	tcph->th_sum = htons(in_cksum((unsigned short *)tcph, sizeof(struct pseudo_hdr)+sizeof(struct tcpheader)));
+	tcph->th_sum = in_cksum((uint16_t *)(pheader), sizeof(struct pseudo_hdr)+sizeof(struct tcpheader));
 
 	sasend = res->ai_addr;
 	salen = res->ai_addrlen;
@@ -230,7 +244,7 @@ void readloop(void) {
 
 	// create socket from here
 	if(res->ai_family == AF_INET) {
-		if((sockfd = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP)) < 0) {
+		if((sockfd = socket(AF_INET,SOCK_RAW,IPPROTO_TCP)) < 0) {
 			perror("socket");
 			exit(1);
 		}
@@ -248,77 +262,18 @@ void readloop(void) {
 	if(setsockopt(sockfd, IPPROTO_IP, IP_HDRINCL, val, sizeof(one)) < 0)
 		fprintf(stderr, "Warning: Cannot set HDRINCL for port 0");
 
-    while(nsent < 4) {
+    while(nsent < 100) {
         send_v4();
         wait_for_reply(1000);
     }
 }
-
-
-
-void proc_v4 (char *ptr, ssize_t len, struct timeval *tvrecv) {
-	int ip_size, tcp_size;
-	struct ipheader *ip;
-	struct tcpheader *tcp;
-	struct timeval *tvsend;
-	double rtt;
-
-	ip = (struct ipheader*)ptr;
-	/* only check two fields of ip header, length and protocol */
-	ip_size = IP_HL(ip) * 4; /* length of ip header */
-#ifdef DEBUG
-	fprintf(stderr, "ip_size = %d",ip_size);
-#endif
-	if(ip_size < 20) {
-		fprintf(stderr, "Invalid IP header length: %d\n",ip_size);
-		return ;
-	}
-	if(ip->ip_p != IPPROTO_TCP ) {
-
-		fprintf(stderr,"Returned Packet is not TCP protocol\n");
-		return;		/*second, check protocol */
-	}
-	tcp = (struct tcpheader *)(ptr + ETHERNET_SIZE + ip_size); /* start of icmp header */
-
-#ifdef DEBUG
-	fprintf(stderr, "tcp_size = %d",tcp_size);
-#endif
-	if(tcp_size < 20) {
-		fprintf(stderr, "Invalid TCP header length: %d\n",tcp_size);
-		return ;
-	}
-
-	if(((tcp->th_flags & 0x04) == TH_RST ) && (tcp->th_flags & 0x10) == TH_ACK) 
-		fprintf(stdout, "RESET packet received.\n");
-
-
-}
-
-void tv_sub(struct timeval *out, struct timeval *in) {
-	if((out->tv_usec -= in->tv_usec) < 0) {
-		--out->tv_sec;
-		out->tv_usec += 100000;
-	}
-	out->tv_sec -= in->tv_sec;
-}
-
-long time_diff(struct timeval *a, struct timeval *b) {
-	long sec_diff = a->tv_sec - b->tv_sec;
-	if(sec_diff == 0) 
-		return (a->tv_usec - b->tv_usec);
-	else if(sec_diff < 100)
-		return (sec_diff * 1000 + a->tv_usec - b->tv_usec);
-	else
-		return (sec_diff * 1000);
-}
-
-
 int wait_for_reply(long wait_time) {
 	/*timeout or not */
 	int result;
 	ssize_t n;
 
 	result = recving_time(sockfd,recvbuf,sizeof(recvbuf),sarecv, wait_time);
+	printf("result = %d\n", result);
 	/* select() function in recving_time timeout */
 	if(result < 0)
 		return 0;
@@ -392,6 +347,69 @@ select_again:
 	}
 	return n;
 }
+
+
+
+void proc_v4 (char *ptr, ssize_t len, struct timeval *tvrecv) {
+	int ip_size, tcp_size;
+	struct ipheader *ip;
+	struct tcpheader *tcp;
+	struct timeval *tvsend;
+	double rtt;
+
+	ip = (struct ipheader*)ptr;
+	/* only check two fields of ip header, length and protocol */
+	ip_size = IP_HL(ip) * 4; /* length of ip header */
+#ifdef DEBUG
+	fprintf(stderr, "ip_size = %d",ip_size);
+#endif
+	if(ip_size < 20) {
+		fprintf(stderr, "Invalid IP header length: %d\n",ip_size);
+		return ;
+	}
+	if(ip->ip_p != IPPROTO_TCP ) {
+
+		fprintf(stderr,"Returned Packet is not TCP protocol\n");
+		return;		/*second, check protocol */
+	}
+	tcp = (struct tcpheader *)(ptr + ETHERNET_SIZE + ip_size); /* start of icmp header */
+
+#ifdef DEBUG
+	fprintf(stderr, "tcp_size = %d",tcp_size);
+#endif
+	tcp_size = TH_OFF(tcp) * 4;
+	if(tcp_size < 20) {
+		fprintf(stderr, "Invalid TCP header length: %d\n",tcp_size);
+		return ;
+	}
+
+	if(((tcp->th_flags & 0x04) == TH_RST ) && (tcp->th_flags & 0x10) == TH_ACK) 
+		fprintf(stdout, "RESET packet received.\n");
+	
+	if(((tcp->th_flags & 0x02) == TH_SYN) && (tcp->th_flags & 0x10) == TH_ACK) 
+		fprintf(stdout, "TCP port open\n");
+}
+
+void tv_sub(struct timeval *out, struct timeval *in) {
+	if((out->tv_usec -= in->tv_usec) < 0) {
+		--out->tv_sec;
+		out->tv_usec += 100000;
+	}
+	out->tv_sec -= in->tv_sec;
+}
+
+long time_diff(struct timeval *a, struct timeval *b) {
+	long sec_diff = a->tv_sec - b->tv_sec;
+	if(sec_diff == 0) 
+		return (a->tv_usec - b->tv_usec);
+	else if(sec_diff < 100)
+		return (sec_diff * 1000 + a->tv_usec - b->tv_usec);
+	else
+		return (sec_diff * 1000);
+}
+
+
+
 
 uint16_t in_cksum(uint16_t *addr, int len) {
 	int nleft = len;
