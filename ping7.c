@@ -140,7 +140,7 @@ void readloop(void) {
 	if(setsockopt(sockfd, IPPROTO_IP, IP_HDRINCL, val, sizeof(one)) < 0)
 		fprintf(stderr, "Warning: Cannot set HDRINCL for port 0");
 
-    	while(nsent < 5) {
+    	while(nsent < 3) {
         	syn_send();
         	wait_for_reply(1000);
     	}
@@ -345,6 +345,13 @@ void proc_v4 (char *ptr, ssize_t len) {
 		fprintf(stderr, "Invalid IP header length: %d\n",ip_size);
 		return ;
 	} */
+
+	ip_size = ip->ip_hl << 2;
+	fprintf(stderr, "ip header is %d bytes\n",ip_size);
+	if(ip_size < 20) {
+		fprintf(stderr, "Invalid IP packet\n");
+		return ;
+	}
 	printf("ip_p = %d\t it's a valid packet\n", ip->ip_p);
 
 	if(ip->ip_p != IPPROTO_TCP ) {
@@ -354,6 +361,12 @@ void proc_v4 (char *ptr, ssize_t len) {
 	}
 
 	tcp = (struct tcphdr *)(ptr + sizeof(struct ip)); /* start of icmp header */
+	tcp_size = tcp->th_off << 2;
+	fprintf(stderr, "tcp header is %d bytes\n",tcp_size);
+	if(tcp_size < 20) {
+		fprintf(stderr, "Invalid TCP packet\n");
+		return ;
+	}
 
 
 	if(((tcp->th_flags & 0x04) == TH_RST ) && (tcp->th_flags & 0x10) == TH_ACK)
