@@ -161,6 +161,7 @@ int wait_for_reply(long wait_time) {
 }
 
 int recving_time(int sockfd, char *buf, int len, struct sockaddr *sarecv, long timeout) {
+	char recived_ip[20];
 	ssize_t n;
 	char controlbuf[BUFSIZE];
 	struct msghdr msg;
@@ -205,7 +206,8 @@ select_again:
 
 	for(;;) {
 		n = recvmsg(sockfd, &msg,0);
-		fprintf(stderr, "recived %d bytes\n",n);
+		fprintf(stderr, "recived %d bytes. ", n);
+//		fprintf(stderr, "From %s,recived %d bytes. ",inet_ntop(AF_INET,&(((struct sockaddr_in*)sarecv)->sin_addr),recived_ip,128), n);
 
 		if( n < 0)
 			if(errno == EINTR )
@@ -347,12 +349,12 @@ void proc_v4 (char *ptr, ssize_t len) {
 	} */
 
 	ip_size = ip->ip_hl << 2;
-	fprintf(stderr, "ip header is %d bytes\n",ip_size);
+	fprintf(stderr, "ip header is %d bytes. ",ip_size);
 	if(ip_size < 20) {
 		fprintf(stderr, "Invalid IP packet\n");
 		return ;
 	}
-	printf("ip_p = %d\t it's a valid packet\n", ip->ip_p);
+	printf("ip protocol = %d, it's a valid packet; ", ip->ip_p);
 
 	if(ip->ip_p != IPPROTO_TCP ) {
 
@@ -362,7 +364,7 @@ void proc_v4 (char *ptr, ssize_t len) {
 
 	tcp = (struct tcphdr *)(ptr + sizeof(struct ip)); /* start of icmp header */
 	tcp_size = tcp->th_off << 2;
-	fprintf(stderr, "tcp header is %d bytes\n",tcp_size);
+	fprintf(stderr, "TCP header is %d bytes, ",tcp_size);
 	if(tcp_size < 20) {
 		fprintf(stderr, "Invalid TCP packet\n");
 		return ;
